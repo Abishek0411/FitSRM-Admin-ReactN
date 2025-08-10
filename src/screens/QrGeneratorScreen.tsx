@@ -11,13 +11,29 @@ import {
   ActivityIndicator,
   ScrollView,
 } from 'react-native';
+import * as RNFS from 'react-native-fs'; // Import react-native-fs
+import Share from 'react-native-share'; // Import react-native-share
 import { generateQrCode } from '../api/apiService';
 
 export default function QrGeneratorScreen() {
   const [name, setName] = useState('');
   const [amount, setAmount] = useState('');
   const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [base64Image, setBase64Image] = useState<string | null>(null); // State to hold base64 data for sharing
   const [isLoading, setIsLoading] = useState(false);
+
+  // Function to convert the image blob to base64
+  const convertBlobToBase64 = (blob: Blob) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(blob);
+    reader.onloadend = () => {
+      const base64Data = reader.result as string;
+      // The result includes a prefix like 'data:image/png;base64,'.
+      // We need to remove it before saving with react-native-fs.
+      const rawBase64 = base64Data.split(',')[1];
+      setBase64Image(rawBase64);
+    };
+  };
 
   const handleGenerateQR = async () => {
     if (!name || !amount) {
@@ -31,13 +47,41 @@ export default function QrGeneratorScreen() {
     try {
       setIsLoading(true);
       setImageUrl(null);
+      setBase64Image(null); // Reset previous image data
+
       const blob = await generateQrCode(name, numericAmount);
       const url = URL.createObjectURL(blob);
       setImageUrl(url);
+      
+      // Convert the blob to base64 so we can save and share it
+      convertBlobToBase64(blob);
+
     } catch (err: any) {
       Alert.alert('Error', err.message);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // New function to handle sharing the QR code
+  const handleShareQR = async () => {
+    if (!base64Image) {
+      Alert.alert('Error', 'No QR code available to share.');
+      return;
+    }
+    try {
+      const path = `${RNFS.CachesDirectoryPath}/qr_code.png`;
+      await RNFS.writeFile(path, base64Image, 'base64');
+      
+      await Share.open({
+        title: 'Share QR Code',
+        url: `file://${path}`,
+        type: 'image/png',
+        failOnCancel: false,
+      });
+
+    } catch (error: any) {
+      Alert.alert('Error', `Failed to share QR code: ${error.message}`);
     }
   };
 
@@ -64,10 +108,18 @@ export default function QrGeneratorScreen() {
         onPress={handleGenerateQR}
         disabled={isLoading}
       />
+      
       {isLoading && <ActivityIndicator size="large" color="#007AFF" style={styles.qrPlaceholder} />}
+
       {imageUrl && (
         <View style={styles.qrContainer}>
           <Image source={{ uri: imageUrl }} style={styles.qrImage} />
+          {/* Conditionally render the Share button only when an image is ready */}
+          {base64Image && (
+            <View style={styles.shareButton}>
+              <Button title="Share QR" onPress={handleShareQR} />
+            </View>
+          )}
         </View>
       )}
     </ScrollView>
@@ -96,6 +148,7 @@ const styles = StyleSheet.create({
   qrContainer: {
     marginTop: 30,
     padding: 10,
+    alignItems: 'center', // Center the content
     backgroundColor: 'white',
     borderRadius: 12,
     shadowColor: '#000',
@@ -105,4 +158,8 @@ const styles = StyleSheet.create({
     elevation: 5,
   },
   qrImage: { width: 250, height: 250 },
+  shareButton: {
+    marginTop: 15, // Add some space above the share button
+    width: '60%',   // Make the button width smaller
+  },
 });
